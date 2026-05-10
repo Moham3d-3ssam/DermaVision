@@ -1,0 +1,7 @@
+flask
+gunicorn
+numpy
+tensorflow
+scikit-learn
+reportlab
+pillow

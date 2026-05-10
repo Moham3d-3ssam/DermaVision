@@ -1,0 +1,1094 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Skin Disease Prediction</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap"/>
+<style>
+/* ══════════════════════════════════════════
+   RESET & BASE
+══════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #07070f;
+  --surface:      #0c0c1e;
+  --surface2:     #0f0f24;
+  --border:       #18182e;
+  --border2:      #22223a;
+  --indigo:       #6366f1;
+  --indigo-light: #818cf8;
+  --indigo-dim:   rgba(99,102,241,0.12);
+  --sky:          #38bdf8;
+  --text:         #d4d4e8;
+  --text-muted:   #6b6b90;
+  --text-dim:     #4a4a6a;
+  --green:        #34d399;
+  --red:          #f87171;
+  --amber:        #fbbf24;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.65;
+  font-size: 15px;
+}
+
+::-webkit-scrollbar            { width: 5px; }
+::-webkit-scrollbar-track      { background: var(--bg); }
+::-webkit-scrollbar-thumb      { background: #1f1f35; border-radius: 10px; }
+
+/* ══════════════════════════════════════════
+   LAYOUT
+══════════════════════════════════════════ */
+.wrapper {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 6rem;
+}
+
+/* ══════════════════════════════════════════
+   HERO
+══════════════════════════════════════════ */
+.hero {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(145deg, #0c0c1e 0%, #0e0e1c 55%, #080e1a 100%);
+  border: 1px solid #1c1c30;
+  border-radius: 22px;
+  padding: 2.5rem 2.5rem 2.2rem;
+  margin-bottom: 2rem;
+}
+.hero::before {
+  content: '';
+  position: absolute; top: -80px; right: -80px;
+  width: 280px; height: 280px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(99,102,241,0.13) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero::after {
+  content: '';
+  position: absolute; bottom: -50px; left: -50px;
+  width: 200px; height: 200px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(56,189,248,0.07) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-pill {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-size: .72rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--indigo-light);
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.22);
+  border-radius: 100px; padding: .3rem .85rem; margin-bottom: 1.1rem;
+}
+.hero h1 {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  font-weight: 800;
+  line-height: 1.22;
+  color: #ececf8;
+  letter-spacing: -0.025em;
+  margin-bottom: .6rem;
+}
+.hero h1 em {
+  font-style: normal;
+  background: linear-gradient(90deg, #818cf8, #38bdf8);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.hero p {
+  font-size: .92rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ══════════════════════════════════════════
+   CARDS
+══════════════════════════════════════════ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 1.6rem;
+  margin-bottom: 1.2rem;
+}
+.card-eyebrow {
+  font-size: .7rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--sky); margin-bottom: .3rem;
+}
+.card-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 1rem; font-weight: 700; color: #ddddf0;
+  margin-bottom: 1.1rem; line-height: 1.35;
+}
+
+/* ══════════════════════════════════════════
+   UPLOAD PAGE (new first screen)
+══════════════════════════════════════════ */
+.upload-page-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 1.8rem;
+  margin-bottom: 1.2rem;
+}
+
+/* Name field */
+.name-field { margin-bottom: 1.4rem; }
+.name-field label {
+  display: block;
+  font-size: .7rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--sky); margin-bottom: .5rem;
+}
+.name-field input[type="text"] {
+  width: 100%;
+  background: #0e0e1e;
+  border: 1px solid #1c1c32;
+  border-radius: 11px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: .95rem;
+  padding: .78rem 1rem;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.name-field input[type="text"]::placeholder { color: #3a3a5a; }
+.name-field input[type="text"]:focus {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+
+/* Two-column upload row */
+.uploads-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+@media (max-width: 520px) {
+  .uploads-row { grid-template-columns: 1fr; }
+}
+
+.upload-col-label {
+  font-size: .7rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  margin-bottom: .5rem;
+}
+.upload-col-label.required { color: var(--sky); }
+.upload-col-label.optional { color: var(--text-muted); }
+
+/* Drop zone */
+.drop-zone {
+  position: relative;
+  border: 1.5px dashed var(--border2);
+  border-radius: 13px;
+  padding: 1.4rem .8rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  background: #09091a;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--indigo);
+  background: #0c0c22;
+}
+.drop-zone input[type="file"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer;
+}
+.drop-icon { font-size: 1.6rem; margin-bottom: .3rem; }
+.drop-text { font-size: .8rem; color: var(--text-muted); line-height: 1.4; }
+.drop-text span { color: var(--indigo-light); font-weight: 500; }
+.drop-hint { font-size: .7rem; color: var(--text-muted); margin-top: .25rem; }
+
+/* Image preview */
+.img-preview {
+  margin-top: .75rem; border-radius: 11px; overflow: hidden;
+  border: 1px solid var(--border);
+  max-height: 200px; display: flex; align-items: center; justify-content: center;
+}
+.img-preview img {
+  width: 100%; max-height: 200px; object-fit: cover; border-radius: 11px; display: block;
+}
+.img-preview.hidden { display: none; }
+
+.photo-circle-preview {
+  margin-top: .75rem;
+  display: flex; justify-content: center;
+}
+.photo-circle-preview.hidden { display: none; }
+.photo-circle {
+  width: 72px; height: 72px; border-radius: 50%; overflow: hidden;
+  border: 2px solid var(--indigo); object-fit: cover;
+}
+
+/* ══════════════════════════════════════════
+   QUESTION SIDEBAR (tiny lesion thumbnail)
+══════════════════════════════════════════ */
+.lesion-thumb-bar {
+  display: flex; align-items: center; gap: .75rem;
+  background: rgba(99,102,241,0.06);
+  border: 1px solid rgba(99,102,241,0.18);
+  border-radius: 12px;
+  padding: .65rem 1rem;
+  margin-bottom: 1.2rem;
+}
+.lesion-thumb {
+  width: 40px; height: 40px; border-radius: 8px;
+  overflow: hidden; flex-shrink: 0;
+  border: 1px solid var(--border2);
+}
+.lesion-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.lesion-thumb-info { font-size: .78rem; color: var(--text-muted); }
+.lesion-thumb-info strong { color: var(--indigo-light); font-weight: 600; display: block; }
+
+/* ══════════════════════════════════════════
+   PROGRESS BAR
+══════════════════════════════════════════ */
+.progress-wrap { margin-bottom: 1.5rem; }
+.progress-meta {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem;
+}
+.progress-label {
+  font-size: .72rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.progress-count { font-size: .8rem; font-weight: 600; color: var(--indigo-light); }
+.progress-track { background: #13132a; border-radius: 6px; height: 5px; overflow: hidden; }
+.progress-fill {
+  height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, var(--indigo), var(--sky));
+  transition: width .4s ease;
+}
+
+/* ══════════════════════════════════════════
+   QUESTION CARD
+══════════════════════════════════════════ */
+.question-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 1.8rem;
+  margin-bottom: 1.2rem;
+}
+
+/* Radio pills */
+.radio-group { display: flex; flex-direction: column; gap: .4rem; }
+.radio-option { display: none; }
+.radio-label {
+  display: flex; align-items: center; gap: .7rem;
+  background: #0e0e1e;
+  border: 1px solid #1c1c32;
+  border-radius: 11px;
+  padding: .72rem 1.1rem;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+  color: #a0a0c0;
+  font-size: .92rem;
+  font-weight: 400;
+  user-select: none;
+}
+.radio-label:hover {
+  border-color: var(--indigo);
+  background: #0f0f26;
+  color: #d4d4f0;
+}
+.radio-option:checked + .radio-label {
+  border-color: var(--indigo);
+  background: var(--indigo-dim);
+  color: var(--indigo-light);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(99,102,241,0.28);
+}
+.radio-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid #2a2a44; flex-shrink: 0;
+  transition: border-color .15s, background .15s;
+}
+.radio-option:checked + .radio-label .radio-dot {
+  border-color: var(--indigo-light);
+  background: var(--indigo-light);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.22);
+}
+
+/* Text / Number */
+.field input[type="text"],
+.field input[type="number"] {
+  width: 100%;
+  background: #0e0e1e;
+  border: 1px solid #1c1c32;
+  border-radius: 11px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: .95rem;
+  padding: .78rem 1rem;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  -moz-appearance: textfield;
+}
+.field input:focus {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+.field input[type="number"]::-webkit-inner-spin-button,
+.field input[type="number"]::-webkit-outer-spin-button { opacity: 1; }
+
+/* Slider */
+.slider-wrap { display: flex; flex-direction: column; gap: .6rem; }
+.slider-val {
+  font-family: 'Syne', sans-serif; font-size: 2rem; font-weight: 700;
+  color: var(--indigo-light); letter-spacing: -.02em; line-height: 1;
+}
+.slider-val small {
+  font-size: .85rem; font-weight: 400; color: var(--text-muted);
+  margin-left: .3rem; font-family: 'DM Sans', sans-serif;
+}
+input[type="range"] {
+  -webkit-appearance: none; width: 100%; height: 5px;
+  border-radius: 6px; background: #1c1c30; cursor: pointer; outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--indigo); border: 2px solid var(--indigo-light);
+  box-shadow: 0 0 0 4px rgba(99,102,241,0.2);
+  transition: box-shadow .15s;
+}
+input[type="range"]:hover::-webkit-slider-thumb {
+  box-shadow: 0 0 0 6px rgba(99,102,241,0.28);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--indigo); border: 2px solid var(--indigo-light);
+}
+
+/* Error banner */
+.error-banner {
+  background: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.25);
+  border-radius: 10px; padding: .75rem 1rem;
+  color: var(--red); font-size: .88rem;
+  margin-bottom: 1rem;
+  display: flex; align-items: center; gap: .5rem;
+}
+
+/* ══════════════════════════════════════════
+   NAV BUTTONS
+══════════════════════════════════════════ */
+.nav-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .75rem;
+  margin-top: .5rem;
+}
+.nav-row.single { grid-template-columns: 1fr; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: .9rem;
+  letter-spacing: .01em; border-radius: 11px; padding: .75rem 1.4rem;
+  cursor: pointer; border: none; transition: all .18s ease; width: 100%;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--indigo), #4f46e5);
+  border: 1px solid #5553e8;
+  color: #fff;
+  box-shadow: 0 2px 16px rgba(99,102,241,0.25);
+}
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--indigo-light), var(--indigo));
+  box-shadow: 0 4px 24px rgba(99,102,241,0.38);
+  transform: translateY(-1px);
+}
+.btn-secondary {
+  background: transparent;
+  border: 1px solid #1c1c32;
+  color: var(--text-muted);
+}
+.btn-secondary:hover {
+  border-color: var(--indigo);
+  color: var(--indigo-light);
+}
+.btn-download {
+  background: linear-gradient(135deg, #059669, #047857);
+  border: 1px solid #06b784;
+  color: #fff;
+  box-shadow: 0 2px 16px rgba(5,150,105,0.25);
+}
+.btn-download:hover {
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 4px 24px rgba(5,150,105,0.38);
+  transform: translateY(-1px);
+}
+.btn:disabled {
+  background: #13132a !important;
+  border: 1px solid #1c1c32 !important;
+  color: #3a3a5a !important;
+  box-shadow: none !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* ══════════════════════════════════════════
+   RESULT PAGE
+══════════════════════════════════════════ */
+.result-header { text-align: center; padding: 2rem 0 1.5rem; }
+.result-header .check { font-size: 2.8rem; margin-bottom: .5rem; }
+.result-header h1 {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(1.4rem, 4vw, 1.8rem);
+  font-weight: 800; color: #ececf8; margin-bottom: .3rem;
+}
+.result-header p { color: var(--text-muted); font-size: .88rem; }
+
+.result-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px; overflow: hidden;
+}
+
+/* patient band */
+.result-band {
+  background: linear-gradient(135deg, #0f0f28 0%, #0d0d20 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 1.5rem 1.8rem;
+  display: flex; align-items: center; gap: 1.3rem;
+}
+.avatar {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: #13132a; border: 2px solid #22223a;
+  overflow: hidden; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-icon { font-size: 1.8rem; }
+.patient-meta h2 {
+  font-family: 'Syne', sans-serif;
+  font-size: 1.15rem; font-weight: 700; color: #e0e0f4; margin-bottom: .15rem;
+}
+.patient-meta span { font-size: .82rem; color: var(--text-muted); }
+
+.diagnosis-block .diag-eyebrow {
+  font-size: .7rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--sky); margin-bottom: .35rem;
+}
+.diagnosis-block .diag-name {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(1.15rem, 3vw, 1.4rem);
+  font-weight: 800; color: #ececf8; margin-bottom: .5rem; line-height: 1.25;
+  word-break: break-word;
+}
+.diag-note { font-size: .8rem; color: var(--text-muted); line-height: 1.6; }
+
+/* info grid */
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.info-cell {
+  padding: .9rem 1.6rem;
+  border-bottom: 1px solid #10101e;
+  border-right: 1px solid #10101e;
+}
+.info-cell:nth-child(even)       { border-right: none; }
+.info-cell:nth-last-child(-n+2)  { border-bottom: none; }
+/* FIX: was #3a3a5a — nearly invisible on dark background */
+.info-cell-label {
+  font-size: .68rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: .2rem;
+}
+.info-cell-value { font-size: .88rem; font-weight: 500; color: #c0c0d8; }
+
+.badge {
+  display: inline-block; font-size: .72rem; font-weight: 600;
+  padding: .18rem .65rem; border-radius: 100px;
+}
+.badge-yes { background: rgba(52,211,153,0.12); color: var(--green); }
+.badge-no  { background: rgba(148,163,184,0.1);  color: #94a3b8; }
+
+/* Result action buttons */
+.result-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .75rem;
+  margin-top: 1.8rem;
+}
+@media (max-width: 460px) {
+  .result-actions { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-pill">🩺 AI-Powered Dermatology</div>
+    <h1>Skin Disease<br><em>Prediction System</em></h1>
+    <p>Upload a dermoscopy image and complete the patient questionnaire to receive an AI-assisted diagnosis.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       UPLOAD PAGE  (step 0 — images + name)
+  ══════════════════════════════════════════ -->
+  {% if page == 'upload' %}
+  <form method="POST" action="/upload" enctype="multipart/form-data">
+
+    {% if error %}
+    <div class="error-banner">⚠️ &nbsp;{{ error }}</div>
+    {% endif %}
+
+    <div class="upload-page-card">
+      <div class="card-eyebrow">Step 0 — Patient & Images</div>
+      <div class="card-title" style="font-family:'Syne',sans-serif;font-size:1.05rem;font-weight:700;color:#ddddf0;margin-bottom:1.4rem;">
+        Enter patient details and upload images to begin
+      </div>
+
+      <!-- Patient Name -->
+      <div class="name-field">
+        <label for="patient-name">👤 Patient Full Name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="patient-name" name="name"
+               placeholder=""
+               value="{{ answers.get('name', '') }}"
+               autocomplete="off" required/>
+      </div>
+
+      <!-- Images row -->
+      <div style="font-size:.7rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--sky);margin-bottom:.8rem;">Images</div>
+      <div class="uploads-row">
+
+        <!-- Lesion Image (Required) -->
+        <div>
+          <div class="upload-col-label required">🔬 Lesion Image <span style="color:var(--red)">*</span></div>
+          <div class="drop-zone"
+               ondragover="dzOver(event,this)"
+               ondragleave="dzLeave(this)"
+               ondrop="dzDrop(event,'img-input','preview-img','preview-wrap')">
+            <input type="file" name="image" accept=".png,.jpg,.jpeg" id="img-input"
+                   onchange="previewImg(this,'preview-img','preview-wrap')"/>
+            <div class="drop-icon">🖼️</div>
+            <div class="drop-text"><span>Click to browse</span> or drag & drop</div>
+            <div class="drop-hint">PNG · JPG · JPEG — max 16 MB</div>
+          </div>
+          <div class="img-preview {% if not image_preview %}hidden{% endif %}" id="preview-wrap">
+            {% if image_preview %}
+            <img src="{{ image_preview }}" id="preview-img" alt="preview"/>
+            {% else %}
+            <img id="preview-img" src="" alt="preview"/>
+            {% endif %}
+          </div>
+          {% if image_preview %}
+          <div style="font-size:.72rem;color:var(--green);margin-top:.4rem;">✓ Image already uploaded — upload again to replace</div>
+          {% endif %}
+        </div>
+
+        <!-- Patient Photo (Optional) -->
+        <div>
+          <div class="upload-col-label optional">👤 Patient Photo <span style="color:var(--text-muted);font-size:.68rem;">(optional)</span></div>
+          <div class="drop-zone"
+               ondragover="dzOver(event,this)"
+               ondragleave="dzLeave(this)"
+               ondrop="dzDrop(event,'photo-input','photo-preview-img','photo-circle-wrap')">
+            <input type="file" name="patient_photo" accept=".png,.jpg,.jpeg" id="photo-input"
+                   onchange="previewImg(this,'photo-preview-img','photo-circle-wrap')"/>
+            <div class="drop-icon">👤</div>
+            <div class="drop-text"><span>Click to browse</span></div>
+            <div class="drop-hint">Optional · PNG · JPG</div>
+          </div>
+          <div class="photo-circle-preview {% if not photo_preview %}hidden{% endif %}" id="photo-circle-wrap">
+            {% if photo_preview %}
+            <img class="photo-circle" src="{{ photo_preview }}" id="photo-preview-img" alt="patient photo"/>
+            {% else %}
+            <img class="photo-circle" id="photo-preview-img" src="" alt="patient photo"/>
+            {% endif %}
+          </div>
+          {% if photo_preview %}
+          <div style="font-size:.72rem;color:var(--green);margin-top:.4rem;text-align:center;">✓ Photo uploaded</div>
+          {% endif %}
+        </div>
+
+      </div>
+    </div>
+
+    <div class="nav-row single">
+      <button type="submit" class="btn btn-primary">Next → Start Questionnaire</button>
+    </div>
+
+  </form>
+  {% endif %}
+
+  <!-- ══════════════════════════════════════════
+       QUESTIONNAIRE PAGE
+  ══════════════════════════════════════════ -->
+  {% if page == 'question' %}
+  <form method="POST" action="/question" id="main-form">
+
+    <!-- Tiny lesion thumbnail reminder -->
+    {% if image_preview %}
+    <div class="lesion-thumb-bar">
+      <div class="lesion-thumb">
+        <img src="{{ image_preview }}" alt="lesion"/>
+      </div>
+      <div class="lesion-thumb-info">
+        <strong>{{ answers.get('name', 'Patient') }}</strong>
+        Lesion image uploaded ✓
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Progress -->
+    <div class="progress-wrap">
+      <div class="progress-meta">
+        <span class="progress-label">Questionnaire progress</span>
+        <span class="progress-count">{{ step + 1 }} / {{ total }}</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:{{ pct }}%"></div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    {% if error %}
+    <div class="error-banner">⚠️ &nbsp;{{ error }}</div>
+    {% endif %}
+
+    <!-- Question card -->
+    <div class="question-card">
+      <div class="card-eyebrow">Question {{ step + 1 }} of {{ total }}</div>
+      <div class="card-title">{{ q.label }}</div>
+
+      <!-- RADIO -->
+      {% if q.type == 'radio' %}
+      <div class="radio-group">
+        {% for opt in q.options %}
+        <input class="radio-option" type="radio" name="{{ q.key }}" id="{{ q.key }}_{{ loop.index }}" value="{{ opt }}"
+               {% if answers.get(q.key) == opt %}checked{% endif %} required/>
+        <label class="radio-label" for="{{ q.key }}_{{ loop.index }}">
+          <span class="radio-dot"></span>{{ opt }}
+        </label>
+        {% endfor %}
+      </div>
+
+      <!-- SLIDER -->
+      {% elif q.type == 'slider' %}
+      <div class="slider-wrap">
+        <div class="slider-val" id="slider-display">
+          {{ answers.get(q.key, q.min)|int }}<small>years old</small>
+        </div>
+        <input type="range" name="{{ q.key }}" id="age-slider"
+               min="{{ q.min }}" max="{{ q.max }}"
+               value="{{ answers.get(q.key, q.min)|int }}"
+               oninput="document.getElementById('slider-display').innerHTML=this.value+'<small>years old</small>'"/>
+      </div>
+
+      <!-- NUMBER -->
+      {% elif q.type == 'number' %}
+      <div class="field">
+        <input type="number" name="{{ q.key }}"
+               min="{{ q.min }}" max="{{ q.max }}" step="any"
+               value="{{ answers.get(q.key, '') }}"
+               placeholder="" required/>
+      </div>
+
+      <!-- TEXT fallback -->
+      {% elif q.type == 'text' %}
+      <div class="field">
+        <input type="text" name="{{ q.key }}"
+               value="{{ answers.get(q.key, '') }}"
+               autocomplete="off" required/>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Navigation -->
+    <div class="nav-row">
+      <button type="submit" name="action" value="prev" class="btn btn-secondary" formnovalidate>← Previous</button>
+      {% if step < total - 1 %}
+      <button type="submit" name="action" value="next" class="btn btn-primary">Next →</button>
+      {% else %}
+      <button type="submit" name="action" value="next" class="btn btn-primary">✓ &nbsp;Submit & Predict</button>
+      {% endif %}
+    </div>
+
+  </form>
+  {% endif %}
+
+  <!-- ══════════════════════════════════════════
+       RESULT PAGE
+  ══════════════════════════════════════════ -->
+  {% if page == 'result' %}
+
+  <div class="result-header">
+    <div class="check">✅</div>
+    <h1>Analysis Complete</h1>
+    <p>AI-assisted prediction based on image &amp; patient data</p>
+  </div>
+
+  <div class="result-card">
+
+    <!-- Patient band -->
+    <div class="result-band">
+      <div class="avatar">
+        {% if photo_src %}
+        <img src="{{ photo_src }}" alt="patient photo"/>
+        {% else %}
+        <span class="avatar-icon">🧑</span>
+        {% endif %}
+      </div>
+      <div class="patient-meta">
+        <h2>{{ answers.get('name', 'Patient') }}</h2>
+        <span>{{ answers.get('gender','N/A') }} &nbsp;·&nbsp; {{ answers.get('age','N/A')|int }} yrs old</span>
+      </div>
+    </div>
+
+    <!-- Confidence ring + diagnosis -->
+    <div style="padding:1.5rem 1.8rem; border-bottom:1px solid #10101e;">
+      <div class="diagnosis-block">
+        <div class="diag-eyebrow">Predicted Diagnosis</div>
+        <div class="diag-name">{{ disease }}</div>
+        <div class="diag-note">
+          This prediction is AI-assisted and should be reviewed
+          by a qualified dermatologist before any clinical use.
+        </div>
+      </div>
+    </div>
+
+    <!-- Lesion image only — patient photo already shown above in the band -->
+    <div style="padding:1.2rem 1.8rem; border-bottom:1px solid #10101e;">
+      <div class="card-eyebrow" style="margin-bottom:.6rem;">Submitted Lesion Image</div>
+      <img src="{{ image_src }}" alt="lesion image"
+           style="width:100%;max-height:280px;object-fit:cover;border-radius:12px;border:1px solid var(--border);"/>
+    </div>
+
+    <!-- Info grid -->
+    <div class="info-grid">
+      {% set fields = [
+        ('Race',                answers.get('race','N/A'),               False),
+        ('Region',              answers.get('region','N/A'),             False),
+        ('Diameter (largest)',  answers.get('diameter_1','N/A'),         False),
+        ('Diameter (smallest)', answers.get('diameter_2','N/A'),         False),
+        ('Smokes',              answers.get('smoke','N/A'),              True),
+        ('Drinks Alcohol',      answers.get('drink','N/A'),              True),
+        ('Skin Cancer Hx',      answers.get('skin_cancer_history','N/A'),True),
+        ('Cancer History',      answers.get('cancer_history','N/A'),     True),
+        ('Pesticide Exposure',  answers.get('pesticide','N/A'),          True),
+        ('Biopsied',            answers.get('biopsed','N/A'),            True),
+        ('Lesion Grew',         answers.get('grew','N/A'),               True),
+        ('Lesion Hurts',        answers.get('hurt','N/A'),               True),
+        ('Lesion Bleeds',       answers.get('bleed','N/A'),              True),
+        ('Lesion Itches',       answers.get('itch','N/A'),               True),
+        ('Elevated',            answers.get('elevation','N/A'),          True),
+        ('Changed',             answers.get('changed','N/A'),            True),
+      ] %}
+
+      {% for label, val, is_bool in fields %}
+      <div class="info-cell">
+        <div class="info-cell-label">{{ label }}</div>
+        <div class="info-cell-value">
+          {% if is_bool %}
+            {% if val|string == 'True' %}
+              <span class="badge badge-yes">Yes</span>
+            {% elif val|string == 'False' %}
+              <span class="badge badge-no">No</span>
+            {% else %}{{ val }}{% endif %}
+          {% else %}
+            {{ val }}{% if 'Diameter' in label and val != 'N/A' %} mm{% endif %}
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Action buttons -->
+  <div class="result-actions">
+    <button onclick="downloadReport()" class="btn btn-download" id="dl-btn">
+      ⬇ &nbsp;Download PDF Report
+    </button>
+    <a href="/reset" class="btn btn-primary" style="text-decoration:none;">
+      ＋ &nbsp;New Examination
+    </a>
+  </div>
+
+  <!-- jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
+  /* Convert an <img> element to a base64 JPEG data-URI via canvas */
+  function imgElToDataURI(imgEl) {
+    if (!imgEl || !imgEl.complete) return null;
+    try {
+      const c = document.createElement('canvas');
+      c.width  = imgEl.naturalWidth  || imgEl.width  || 300;
+      c.height = imgEl.naturalHeight || imgEl.height || 300;
+      c.getContext('2d').drawImage(imgEl, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.88);
+    } catch(e) { return null; }
+  }
+
+  /* Draw an image into the PDF centred in a box, return height used */
+  function pdfImage(doc, dataURI, x, y, maxW, maxH) {
+    if (!dataURI) return 0;
+    const tmp   = new Image();
+    tmp.src     = dataURI;
+    const ratio = (tmp.naturalWidth || 1) / (tmp.naturalHeight || 1);
+    let   iw    = Math.min(maxW, maxH * ratio);
+    let   ih    = iw / ratio;
+    if (ih > maxH) { ih = maxH; iw = ih * ratio; }
+    doc.addImage(dataURI, 'JPEG', x + (maxW - iw) / 2, y, iw, ih);
+    return ih;
+  }
+
+  function downloadReport() {
+    const btn = document.getElementById('dl-btn');
+    btn.textContent = 'Generating...';
+    btn.disabled = true;
+
+    try {
+      const { jsPDF } = window.jspdf;
+      const doc    = new jsPDF({ unit: 'mm', format: 'a4' });
+      const W      = 210;
+      const M      = 14;
+      const inner  = W - M * 2;
+      let   y      = 0;
+
+      /* ── colour helpers ── */
+      const C = {
+        indigo   : [99,  102, 241],
+        indigoDim: [230, 231, 253],
+        dark     : [12,  12,  35],
+        muted    : [110, 110, 145],
+        text     : [40,  40,  70],
+        green    : [22,  163, 74],
+        white    : [255, 255, 255],
+        border   : [210, 210, 230],
+      };
+
+      function setFill(col)   { doc.setFillColor(...col); }
+      function setDraw(col)   { doc.setDrawColor(...col); }
+      function setTxt (col)   { doc.setTextColor(...col); }
+      function fillRect(x,yy,w,h,col){ setFill(col); doc.rect(x,yy,w,h,'F'); }
+      function strokeRect(x,yy,w,h,col,lw){ setDraw(col); doc.setLineWidth(lw||0.25); doc.rect(x,yy,w,h); }
+      function hLine(yy,col,lw){ setDraw(col||C.border); doc.setLineWidth(lw||0.25); doc.line(M,yy,W-M,yy); }
+
+      function sectionHead(label, yy) {
+        setTxt(C.indigo);
+        doc.setFont('helvetica','bold'); doc.setFontSize(9);
+        doc.text(label, M, yy);
+        hLine(yy + 1.5, C.indigo, 0.4);
+        return yy + 6;
+      }
+
+      /* ══════════════════════════════════════
+         HEADER
+      ══════════════════════════════════════ */
+      fillRect(0, 0, W, 32, C.dark);
+      setTxt(C.white);
+      doc.setFont('helvetica','bold'); doc.setFontSize(15);
+      doc.text('Skin Disease Prediction Report', M, 13);
+      setTxt(C.muted);
+      doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+      doc.text('AI-Assisted Dermatology  |  For clinical review only', M, 20);
+      setTxt([160,160,200]);
+      const _now = new Date();
+      const _date = _now.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+      const _time = _now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      doc.text(_date + '  ' + _time, W-M, 13, {align:'right'});
+      y = 38;
+
+      /* ══════════════════════════════════════
+         DIAGNOSIS BOX  — lesion image inside, patient photo outside right
+      ══════════════════════════════════════ */
+      const photoEl   = document.querySelector('.avatar img');
+      const hasPhoto  = photoEl && photoEl.src && !photoEl.src.endsWith('#');
+      const photoURI  = hasPhoto ? imgElToDataURI(photoEl) : null;
+
+      const lesionEl  = document.querySelector('.result-card img[alt="lesion image"]');
+      const lesionURI = lesionEl ? imgElToDataURI(lesionEl) : null;
+
+      /* ── redesigned diagnosis banner ── */
+      const boxH    = 50;
+      const stripW  = inner * 0.38;   /* dark left strip — diagnosis text */
+      const imgW    = inner - stripW; /* right area — lesion image */
+
+      /* left strip: dark navy */
+      fillRect(M, y, stripW, boxH, [18, 18, 52]);
+
+      /* right image area: neutral light */
+      fillRect(M + stripW, y, imgW, boxH, [245, 245, 250]);
+
+      /* outer border */
+      strokeRect(M, y, inner, boxH, C.indigo, 0.5);
+
+      /* thin accent line between strip and image */
+      setDraw(C.indigo); doc.setLineWidth(0.5);
+      doc.line(M + stripW, y, M + stripW, y + boxH);
+
+      /* eyebrow label */
+      setTxt([160, 160, 230]);
+      doc.setFont('helvetica','bold'); doc.setFontSize(6);
+      doc.text('PREDICTED DIAGNOSIS', M + 5, y + 9);
+
+      /* disease name — white, large */
+      setTxt(C.white);
+      doc.setFont('helvetica','bold'); doc.setFontSize(15);
+      const diseaseLines = doc.splitTextToSize('{{ disease }}', stripW - 8);
+      doc.text(diseaseLines, M + 5, y + 20);
+
+      /* patient name only inside strip */
+      setTxt([140, 140, 200]);
+      doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
+      doc.text('{{ answers.get("name","—") }}', M + 5, y + 36);
+
+      /* lesion image — fills right area edge-to-edge */
+      if (lesionURI) {
+        pdfImage(doc, lesionURI, M + stripW + 1, y + 1, imgW - 2, boxH - 2);
+      }
+
+      /* patient photo — small thumbnail overlaid top-right corner of strip */
+      if (photoURI) {
+        const phSize = 18;
+        const phX    = M + stripW - phSize - 4;
+        const phY    = y + 4;
+        /* white frame */
+        fillRect(phX - 1, phY - 1, phSize + 2, phSize + 2, C.white);
+        pdfImage(doc, photoURI, phX, phY, phSize, phSize);
+      }
+
+      y += boxH + 5;
+
+      /* ══════════════════════════════════════
+         PATIENT INFO  (2 columns)
+      ══════════════════════════════════════ */
+      y = sectionHead('Patient Information', y);
+
+      const pFields = [
+        ['Name',           '{{ answers.get("name","N/A") }}'],
+        ['Age',            '{{ answers.get("age","N/A")|int }} yrs'],
+        ['Gender',         '{{ answers.get("gender","N/A") }}'],
+        ['Race',           '{{ answers.get("race","N/A") }}'],
+        ['Lesion Region',  '{{ answers.get("region","N/A") }}'],
+        ['Largest Diam.',  '{{ answers.get("diameter_1","N/A") }} mm'],
+        ['Smallest Diam.', '{{ answers.get("diameter_2","N/A") }} mm'],
+      ];
+
+      const colW2  = inner / 2;
+      const pRowH  = 13;   /* row height with padding */
+      /* draw all row shading first so it never covers text */
+      pFields.forEach(([, ], i) => {
+        const cy = y + Math.floor(i / 2) * pRowH;
+        if (i % 2 === 0 && Math.floor(i/2) % 2 === 0) fillRect(M, cy - 1, inner, pRowH, [240,240,252]);
+      });
+      /* then draw all labels and values on top */
+      pFields.forEach(([lbl, val], i) => {
+        const cx = M + (i % 2) * colW2;
+        const cy = y + Math.floor(i / 2) * pRowH;
+        setTxt(C.muted); doc.setFont('helvetica','bold'); doc.setFontSize(6.5);
+        doc.text(lbl.toUpperCase(), cx + 3, cy + 3);
+        setTxt([20,20,50]); doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+        doc.text(String(val), cx + 3, cy + 9);
+      });
+      y += Math.ceil(pFields.length / 2) * pRowH + 4;
+
+      /* ══════════════════════════════════════
+         CLINICAL DATA  (4 columns)
+      ══════════════════════════════════════ */
+      y = sectionHead('Clinical Data', y);
+
+      function yn(v){ return v==='True'?'Yes': v==='False'?'No': String(v||'N/A'); }
+      const clinical = [
+        ['Smokes',         yn('{{ answers.get("smoke","N/A") }}')],
+        ['Drinks Alcohol', yn('{{ answers.get("drink","N/A") }}')],
+        ['Skin Cancer Hx', yn('{{ answers.get("skin_cancer_history","N/A") }}')],
+        ['Cancer History', yn('{{ answers.get("cancer_history","N/A") }}')],
+        ['Pesticide Exp.', yn('{{ answers.get("pesticide","N/A") }}')],
+        ['Biopsied',       yn('{{ answers.get("biopsed","N/A") }}')],
+        ['Lesion Grew',    yn('{{ answers.get("grew","N/A") }}')],
+        ['Lesion Hurts',   yn('{{ answers.get("hurt","N/A") }}')],
+        ['Lesion Bleeds',  yn('{{ answers.get("bleed","N/A") }}')],
+        ['Lesion Itches',  yn('{{ answers.get("itch","N/A") }}')],
+        ['Elevated',       yn('{{ answers.get("elevation","N/A") }}')],
+        ['Changed',        yn('{{ answers.get("changed","N/A") }}')],
+        ['Sewage System',  yn('{{ answers.get("has_sewage_system","N/A") }}')],
+        ['Piped Water',    yn('{{ answers.get("has_piped_water","N/A") }}')],
+      ];
+
+      const cols3  = 4;
+      const cW3    = inner / cols3;
+      const cRowH  = 13;  /* row height with padding */
+      clinical.forEach(([lbl, val], i) => {
+        const cx = M + (i % cols3) * cW3;
+        const cy = y + Math.floor(i / cols3) * cRowH;
+        if (Math.floor(i/cols3) % 2 === 0) fillRect(cx, cy - 1, cW3, cRowH, [240,240,252]);
+        setTxt(C.muted); doc.setFont('helvetica','bold'); doc.setFontSize(6);
+        doc.text(lbl.toUpperCase(), cx + 3, cy + 3);
+        const isYes = val==='Yes', isNo = val==='No';
+        setTxt(isYes ? C.green : isNo ? [80,80,110] : [20,20,50]);
+        doc.setFont('helvetica','bold'); doc.setFontSize(8);
+        doc.text(val, cx + 3, cy + 9);
+      });
+      y += Math.ceil(clinical.length / cols3) * cRowH + 5;
+
+      /* ══════════════════════════════════════
+         DISCLAIMER
+      ══════════════════════════════════════ */
+      fillRect(M, y, inner, 12, [255,245,245]);
+      strokeRect(M, y, inner, 12, [220,150,150], 0.3);
+      setTxt([160,60,60]);
+      doc.setFont('helvetica','italic'); doc.setFontSize(7);
+      const discText = 'WARNING: This report is AI-generated and for informational purposes only. It must be reviewed by a qualified dermatologist before any clinical decision is made.';
+      const discLines = doc.splitTextToSize(discText, inner - 6);
+      doc.text(discLines, M+3, y+5);
+
+      /* ══════════════════════════════════════
+         SAVE
+      ══════════════════════════════════════ */
+      const patientName = '{{ answers.get("name","patient") }}'.replace(/\s+/g,'_');
+      doc.save('Report_' + patientName + '.pdf');
+
+    } catch(err) {
+      alert('PDF error: ' + err.message);
+      console.error(err);
+    } finally {
+      btn.innerHTML = '&#8595;&nbsp; Download PDF Report';
+      btn.disabled  = false;
+    }
+  }
+  </script>
+
+  {% endif %}
+
+</div><!-- /wrapper -->
+
+<script>
+/* Generic image preview */
+function previewImg(input, imgId, wrapId) {
+  if (!input.files || !input.files[0]) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img  = document.getElementById(imgId);
+    const wrap = document.getElementById(wrapId);
+    if (img)  img.src = e.target.result;
+    if (wrap) wrap.classList.remove('hidden');
+  };
+  reader.readAsDataURL(input.files[0]);
+}
+
+/* Drag & drop helpers */
+function dzOver(e, el)  { e.preventDefault(); el.classList.add('dragover'); }
+function dzLeave(el)    { el.classList.remove('dragover'); }
+function dzDrop(e, inputId, imgId, wrapId) {
+  e.preventDefault();
+  dzLeave(e.currentTarget);
+  const fi = document.getElementById(inputId);
+  if (e.dataTransfer.files.length) {
+    const dt = new DataTransfer();
+    dt.items.add(e.dataTransfer.files[0]);
+    fi.files = dt.files;
+    previewImg(fi, imgId, wrapId);
+  }
+}
+</script>
+</body>
+</html>
