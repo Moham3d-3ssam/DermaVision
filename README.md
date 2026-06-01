@@ -1,7 +1,6 @@
 # DermaVision
 
-DermaVision is a deep-learning project for **skin disease image classification**.  
-It provides an easy-to-use interface where users can upload a skin image and receive a predicted disease class with confidence.
+DermaVision is an AI-based system for detecting skin diseases using both medical images and patient metadata. Users upload a skin image and provide relevant metadata. The uploaded image is analyzed by a CNN to extract visual features, while the metadata is processed by an ANN to learn clinical and patient-related patterns. The final prediction is generated using an ensemble meta-learning late-fusion approach that combines information from both models to improve accuracy and robustness.
 
 ## Live Demo
 
