@@ -16,12 +16,14 @@ This project implements a hybrid approach to skin disease classification by comb
 - **Feature Fusion**: Integration of image features with patient metadata for enhanced predictions
 
 The system can classify six types of skin conditions:
-- **ACK** - Actinic Keratosis
-- **BCC** - Basal Cell Carcinoma
-- **MEL** - Melanoma
-- **NEV** - Nevus (Mole)
-- **SCC** - Squamous Cell Carcinoma
-- **SEK** - Seborrheic Keratosis
+| Code | Disease Name | Description |
+|------|-------------|-------------|
+| ACK | Actinic Keratosis | Pre-cancerous skin growth caused by sun damage |
+| BCC | Basal Cell Carcinoma | Most common type of skin cancer |
+| MEL | Melanoma | Most dangerous type of skin cancer |
+| NEV | Nevus | Common mole, usually benign |
+| SCC | Squamous Cell Carcinoma | Second most common skin cancer |
+| SEK | Seborrheic Keratosis | Non-cancerous skin growth |
 
 ## Project Goals
 
