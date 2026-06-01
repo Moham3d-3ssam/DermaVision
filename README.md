@@ -52,11 +52,9 @@ The system can classify six types of skin conditions:
 ```text
 DermaVision/
 ├── app/
-│   ├── app.py
-│   ├── check.py
-│   ├── config.py
-│   ├── model.py
-│   └── utils.py
+│   ├── templates/
+│       └── index.html
+│   └── app.py
 ├── data/
 │   ├── flip_blur_imgs/
 │   ├── flip_noise_color_imgs/
@@ -64,6 +62,12 @@ DermaVision/
 │   ├── resized_imgs/
 │   └── rotate_zoom_imgs/
 ├── notebook/
+│   ├── 01. Data_Augmentation.ipynb
+│   ├── 02. Data_Processing.ipynb
+│   ├── 03. Increase_Data.ipynb
+│   ├── 04. Train_CNN_TF_Model.ipynb
+│   ├── 05. Train_ANN_Model.ipynb
+│   └── 06. Train_Final_Ensemble_Model.ipynb
 ├── saved_models/
 ├── Procfile
 └── requirements.txt
