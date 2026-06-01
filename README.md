@@ -130,4 +130,4 @@ Predictions are model-generated and should not replace professional medical diag
 
 ## Author
 
-- **Mohamed Essam**
+**Mohamed Essam**
