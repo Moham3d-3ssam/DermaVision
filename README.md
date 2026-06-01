@@ -40,6 +40,26 @@ The system can classify six types of skin conditions:
 - Helpful treatment-resource links based on predicted class
 - Ready-to-run Streamlit application
 
+## 🔬 Model Architecture
+
+### CNN Component
+- Input: 128x128 RGB images
+- Architecture: Convolutional layers for automatic feature extraction
+- Output: Feature vector for fusion
+
+### Metadata Component
+- Patient demographics: age, gender, race, ...
+- Medical history: skin cancer history, cancer history, smoking, drinking
+- Lesion characteristics: diameter, region, elevation, changes, symptoms
+- Environmental factors: sewage system, piped water access
+- Region encoding: One-hot encoding for 13 body regions
+
+### Ensemble Component
+- Combines CNN features with metadata features
+- Uses multiple classifiers (XGBoost, LightGBM, Random Forest)
+- Voting mechanism for final prediction
+- Confidence score based on classifier agreement
+
 ## Tech Stack
 
 - **Python**
