@@ -55,7 +55,7 @@ DermaVision/
 │   ├── templates/
 │       └── index.html
 │   └── app.py
-├── data/
+├── data/ > We added **only one image** in each data folder because the full dataset is very large.
 │   ├── flip_blur_imgs/
 │   ├── flip_noise_color_imgs/
 │   ├── main_imgs/
@@ -72,20 +72,6 @@ DermaVision/
 ├── Procfile
 └── requirements.txt
 ```
-
-## Data Folder Details
-
-```text
-DermaVision/data/
-├── flip_blur_imgs/
-├── flip_noise_color_imgs/
-├── main_imgs/
-├── resized_imgs/
-└── rotate_zoom_imgs/
-```
-
-> We added **only one image** in each data folder because the full dataset is very large.
-
 
 ## Local Setup
 
