@@ -55,7 +55,7 @@ DermaVision/
 │   ├── templates/
 │       └── index.html
 │   └── app.py
-├── data/ > We added **only one image** in each data folder because the full dataset is very large.
+├── data/       # We added only one image in each data folder because the full dataset is very large.
 │   ├── flip_blur_imgs/
 │   ├── flip_noise_color_imgs/
 │   ├── main_imgs/
