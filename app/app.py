@@ -3,475 +3,677 @@ Flask version — Fixed:
   1. Images stored in server temp files (not session) → fixes ERR_RESPONSE_HEADERS_TOO_BIG
   2. Upload page is separate from the Name question
   3. Report download added at result page
+  4. Prediction pipeline now matches notebook 06 exactly:
+         final_x = [ CNN softmax (6) | ANN softmax (6) * 2 ]  ->  ensemble_clf
+     (before, the 12 patient-metadata values were fed straight into the
+      ensemble, which was trained on those 12 CNN+ANN probabilities).
+  5. Confidence = real ensemble probability of the predicted class.
+  6. Prediction cached (no re-run on refresh), validated uploads, auto-cleanup.
 
 Run:  python app.py
 Then open http://127.0.0.1:5000
+
+Production:  gunicorn -w 1 --threads 4 --timeout 120 -b 0.0.0.0:$PORT app:app
 """
 
-import os, pickle, io, base64, uuid, tempfile, json
+import io
+import math
+import os
+import pickle
+import re
+import secrets
+import tempfile
+import threading
+import time
+import uuid
+
 import numpy as np
-import tensorflow as tf
-from flask import (Flask, render_template, request, session,
-                   redirect, url_for, send_file, abort, make_response)
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.units import cm
-from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                 Table, TableStyle, Image as RLImage)
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
+from flask import (Flask, abort, make_response, redirect, render_template,
+                   request, send_file, session, url_for)
+from PIL import Image, ImageOps
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-BASE = os.path.dirname(os.path.abspath(__file__))
-ROOT = BASE
-MODELS_DIR = os.path.join(ROOT, "saved_models")
+try:                      # same library the notebook used for preprocessing
+    import cv2
+except ImportError:       # falls back to Pillow (tiny numeric differences)
+    cv2 = None
 
-# Temp directory for uploaded images (avoids bloating the session cookie)
+Image.MAX_IMAGE_PIXELS = 50_000_000          # decompression-bomb guard
+
+# ── Paths / config ─────────────────────────────────────────────────────────────
+BASE       = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = next(
+    (p for p in (os.environ.get("MODELS_DIR", ""),
+                 os.path.join(BASE, "saved_models"),                    # next to app.py
+                 os.path.join(os.path.dirname(BASE), "saved_models"))   # repo root (DermaVision/saved_models)
+     if p and os.path.isdir(p)),
+    os.path.join(BASE, "saved_models"))
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "dermai_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# ── Load models once at startup ────────────────────────────────────────────────
+MAX_FILE_BYTES = 16 * 1024 * 1024            # per image
+MAX_SIDE       = 1024                        # stored image size
+FILE_TTL       = 60 * 60                     # delete temp images after 1 hour
+TOKEN_RE       = re.compile(r"[0-9a-f]{32}")
+
+
+# ── Models (loaded once at startup) ────────────────────────────────────────────
 def _load(name):
-    with open(os.path.join(MODELS_DIR, name), "rb") as f:
+    path = os.path.join(MODELS_DIR, name)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Missing model file: {path}")
+    with open(path, "rb") as f:
         return pickle.load(f)
+
 
 sc           = _load("sc.pkl")
 orderLabels  = _load("orderLabels.pkl")
-ensemble_clf = _load("ensemble_clf.pki")
-xgb_clf      = _load("xgb_clf.pki")
-lgb_clf      = _load("lgb_clf.pki")
-cnn_model    = tf.keras.models.load_model(
-    os.path.join(MODELS_DIR, "cnn_tf_model.keras"))
+ensemble_clf = _load("ensemble_clf.pki")      # VotingClassifier(xgb, lgb, gb) — soft voting
+
+# Order of the ANN input vector = ann_final.drop(columns=["diagnostic"]).columns  (verified)
+REGION_COLS = ["ARM", "BACK", "CHEST", "EAR", "FACE", "FOOT", "FOREARM",
+               "HAND", "LIP", "NECK", "NOSE", "SCALP", "THIGH"]       # ABDOMEN = all zeros (drop_first)
+ANN_FEATURES = (["age", "gender", "smoke", "drink", "skin_cancer_history", "cancer_history",
+                 "pesticide", "biopsed", "grew", "hurt", "bleed", "itch", "elevation", "changed",
+                 "diameter_1", "diameter_2", "has_sewage_system", "has_piped_water", "race"]
+                + [f"region_{r}" for r in REGION_COLS])               # 32 columns
+
+# The training data has a numeric `race` column with values 1..5. Its meaning is NOT documented
+# in the notebooks, so this mapping is a best guess — edit it if you know the real coding.
+RACE_CODE = {"White": 1, "Black": 2, "Hispanic": 3, "Asian or Pacific Islander": 4,
+             "Native American": 5, "Other": 3}
+
+_cnn_model = _ann_model = None
+_load_lock    = threading.Lock()
+_predict_lock = threading.Lock()
+
+
+def get_models():
+    """Load the two Keras models once (thread-safe) and sanity-check their shapes."""
+    global _cnn_model, _ann_model
+    if _cnn_model is None or _ann_model is None:
+        with _load_lock:
+            if _cnn_model is None or _ann_model is None:
+                import tensorflow as tf
+                cnn = tf.keras.models.load_model(os.path.join(MODELS_DIR, "cnn_tf_model.keras"))
+                ann = tf.keras.models.load_model(os.path.join(MODELS_DIR, "ann_model.keras"))
+
+                n_ann = ann.input_shape[-1]
+                if n_ann != len(ANN_FEATURES):
+                    raise RuntimeError(
+                        f"ann_model expects {n_ann} input features but ANN_FEATURES has "
+                        f"{len(ANN_FEATURES)}. Fix ANN_FEATURES / build_ann_vector() to match "
+                        f"ann_final.columns from the notebook.")
+                n_ens = getattr(ensemble_clf, "n_features_in_", None)
+                n_out = cnn.output_shape[-1] + ann.output_shape[-1]
+                if n_ens is not None and n_ens != n_out:
+                    raise RuntimeError(
+                        f"ensemble_clf expects {n_ens} features but CNN+ANN output {n_out}.")
+                _cnn_model, _ann_model = cnn, ann
+    return _cnn_model, _ann_model
+
+
+if os.environ.get("PRELOAD_MODELS", "1") == "1":
+    get_models()
+
 
 # ── Question definitions (name removed — handled on upload page) ───────────────
+YES_NO = ["True", "False"]
 QUESTIONS = [
-    {"key": "age",                 "type": "slider", "label": "What is the age of the patient?",                              "min": 1,   "max": 100},
+    {"key": "age",                 "type": "slider", "label": "What is the age of the patient?",                              "min": 1, "max": 100},
     {"key": "gender",              "type": "radio",  "label": "What is the gender of the patient?",                           "options": ["Male", "Female"]},
     {"key": "race",                "type": "radio",  "label": "What is the race of the patient?",                             "options": ["White", "Black", "Hispanic", "Asian or Pacific Islander", "Native American", "Other"]},
-    {"key": "region",              "type": "radio",  "label": "What part of the body is the lesion on?",                      "options": ["Abdomen","Arm","Back","Chest","Ear","Face","Foot","Forearm","Hand","Lip","Neck","Nose","Scalp","Thigh"]},
+    {"key": "region",              "type": "radio",  "label": "What part of the body is the lesion on?",                      "options": ["Abdomen", "Arm", "Back", "Chest", "Ear", "Face", "Foot", "Forearm", "Hand", "Lip", "Neck", "Nose", "Scalp", "Thigh"]},
     {"key": "diameter_1",          "type": "number", "label": "What is the largest diameter of the lesion (mm)?",             "min": 0, "max": 9999, "step": "any"},
     {"key": "diameter_2",          "type": "number", "label": "What is the smallest diameter of the lesion (mm)?",            "min": 0, "max": 9999, "step": "any"},
-    {"key": "smoke",               "type": "radio",  "label": "Does the patient smoke?",                                      "options": ["True", "False"]},
-    {"key": "drink",               "type": "radio",  "label": "Does the patient drink alcohol?",                              "options": ["True", "False"]},
-    {"key": "skin_cancer_history", "type": "radio",  "label": "Does the patient have a history of skin cancer?",              "options": ["True", "False"]},
-    {"key": "cancer_history",      "type": "radio",  "label": "Does the patient have a history of any other type of cancer?", "options": ["True", "False"]},
-    {"key": "pesticide",           "type": "radio",  "label": "Has the patient been exposed to pesticides?",                  "options": ["True", "False"]},
-    {"key": "biopsed",             "type": "radio",  "label": "Has the patient's lesion been biopsied?",                      "options": ["True", "False"]},
-    {"key": "grew",                "type": "radio",  "label": "Has the lesion grown?",                                        "options": ["True", "False"]},
-    {"key": "hurt",                "type": "radio",  "label": "Does the lesion hurt?",                                        "options": ["True", "False"]},
-    {"key": "bleed",               "type": "radio",  "label": "Does the lesion bleed?",                                       "options": ["True", "False"]},
-    {"key": "itch",                "type": "radio",  "label": "Does the lesion itch?",                                        "options": ["True", "False"]},
-    {"key": "elevation",           "type": "radio",  "label": "Is the lesion elevated?",                                      "options": ["True", "False"]},
-    {"key": "changed",             "type": "radio",  "label": "Has the lesion changed in appearance?",                        "options": ["True", "False"]},
-    {"key": "has_sewage_system",   "type": "radio",  "label": "Does the patient's home have a sewage system?",                "options": ["True", "False"]},
-    {"key": "has_piped_water",     "type": "radio",  "label": "Does the patient's home have piped water?",                    "options": ["True", "False"]},
+    {"key": "smoke",               "type": "radio",  "label": "Does the patient smoke?",                                      "options": YES_NO},
+    {"key": "drink",               "type": "radio",  "label": "Does the patient drink alcohol?",                              "options": YES_NO},
+    {"key": "skin_cancer_history", "type": "radio",  "label": "Does the patient have a history of skin cancer?",              "options": YES_NO},
+    {"key": "cancer_history",      "type": "radio",  "label": "Does the patient have a history of any other type of cancer?", "options": YES_NO},
+    {"key": "pesticide",           "type": "radio",  "label": "Has the patient been exposed to pesticides?",                  "options": YES_NO},
+    {"key": "biopsed",             "type": "radio",  "label": "Has the patient's lesion been biopsied?",                      "options": YES_NO},
+    {"key": "grew",                "type": "radio",  "label": "Has the lesion grown?",                                        "options": YES_NO},
+    {"key": "hurt",                "type": "radio",  "label": "Does the lesion hurt?",                                        "options": YES_NO},
+    {"key": "bleed",               "type": "radio",  "label": "Does the lesion bleed?",                                       "options": YES_NO},
+    {"key": "itch",                "type": "radio",  "label": "Does the lesion itch?",                                        "options": YES_NO},
+    {"key": "elevation",           "type": "radio",  "label": "Is the lesion elevated?",                                      "options": YES_NO},
+    {"key": "changed",             "type": "radio",  "label": "Has the lesion changed in appearance?",                        "options": YES_NO},
+    {"key": "has_sewage_system",   "type": "radio",  "label": "Does the patient's home have a sewage system?",                "options": YES_NO},
+    {"key": "has_piped_water",     "type": "radio",  "label": "Does the patient's home have piped water?",                    "options": YES_NO},
 ]
 TOTAL = len(QUESTIONS)
 
-# ── Image helpers (disk-based, not session) ────────────────────────────────────
-def save_image_to_disk(file_storage):
-    """Save an uploaded FileStorage to a temp file; return (token, mime)."""
-    token    = str(uuid.uuid4())
-    mime     = file_storage.mimetype or "image/jpeg"
-    ext      = mime.split("/")[-1] if "/" in mime else "jpg"
-    path     = os.path.join(UPLOAD_DIR, f"{token}.{ext}")
-    file_storage.seek(0)
-    file_storage.save(path)
-    return token, mime
 
-def get_image_bytes(token, mime):
-    """Read image bytes from disk given a token and mime type."""
-    ext  = mime.split("/")[-1] if "/" in mime else "jpg"
-    path = os.path.join(UPLOAD_DIR, f"{token}.{ext}")
-    if not os.path.exists(path):
+# ── Image helpers (disk-based, never in the session cookie) ────────────────────
+def image_path(token):
+    if not token or not TOKEN_RE.fullmatch(token):
         return None
-    with open(path, "rb") as f:
-        return f.read()
+    return os.path.join(UPLOAD_DIR, f"{token}.jpg")
 
-def get_image_data_uri(token, mime):
-    """Return a data: URI for inline <img> display."""
-    data = get_image_bytes(token, mime)
-    if data is None:
-        return None
-    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+def array_path(token):
+    p = image_path(token)
+    return p[:-4] + ".npy" if p else None
+
+
+def image_exists(token):
+    p = image_path(token)
+    return bool(p and os.path.exists(p))
+
+
+def delete_image(token):
+    for p in (image_path(token), array_path(token)):
+        if p and os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def cnn_array_from_bytes(data, pil_img):
+    """224x224 RGB uint8 — same as the notebook: cv2.imread -> cv2.resize -> BGR2RGB."""
+    if cv2 is not None:
+        bgr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        if bgr is not None:
+            return cv2.cvtColor(cv2.resize(bgr, (224, 224)), cv2.COLOR_BGR2RGB)
+    return np.asarray(pil_img.convert("RGB").resize((224, 224), Image.BILINEAR), dtype=np.uint8)
+
+
+def save_image(file_storage, for_cnn=False):
+    """Validate + normalise an upload. Returns a token, or raises ValueError."""
+    data = file_storage.read()
+    if not data:
+        raise ValueError("The uploaded file is empty.")
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("Image is too large (max 16 MB).")
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.format not in ("PNG", "JPEG"):
+            raise ValueError("Only PNG and JPG images are allowed.")
+        img.load()
+        cnn_arr = cnn_array_from_bytes(data, img) if for_cnn else None
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGBA")
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        else:
+            img = img.convert("RGB")
+        img.thumbnail((MAX_SIDE, MAX_SIDE))
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError("That file is not a valid image.")
+
+    token = uuid.uuid4().hex
+    img.save(image_path(token), "JPEG", quality=90, optimize=True)
+    if cnn_arr is not None:
+        np.save(array_path(token), cnn_arr)
+    return token
+
+
+_last_cleanup = 0.0
+
+
+def cleanup_old_files():
+    """Delete temp images older than FILE_TTL (throttled to once / 5 min)."""
+    global _last_cleanup
+    now = time.time()
+    if now - _last_cleanup < 300:
+        return
+    _last_cleanup = now
+    try:
+        for entry in os.scandir(UPLOAD_DIR):
+            if entry.is_file() and now - entry.stat().st_mtime > FILE_TTL:
+                try:
+                    os.remove(entry.path)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def delete_session_images(answers):
+    for key in ("image_token", "photo_token"):
+        delete_image(answers.get(key))
+
+
+def image_url(kind, answers):
+    key = "image_token" if kind == "lesion" else "photo_token"
+    token = answers.get(key)
+    if token and image_exists(token):
+        return url_for("serve_image", kind=kind, v=token)
+    return None
+
 
 # ── Inference ──────────────────────────────────────────────────────────────────
+DISEASE_NAMES = {
+    "ACK": "Actinic Keratosis",
+    "BCC": "Basal Cell Carcinoma",
+    "MEL": "Melanoma",
+    "NEV": "Nevus",
+    "SCC": "Squamous Cell Carcinoma",
+    "SEK": "Seborrheic Keratosis",
+}
+
+
 def to_bool(v):
     return 1 if str(v) == "True" else 0
 
-def run_inference(answers, image_bytes):
-    img = tf.image.decode_image(image_bytes, channels=3, expand_animations=False)
-    img = tf.cast(img, tf.float32)
-    img = tf.image.resize(img, (224, 224)) / 255.0
-    img = tf.expand_dims(img, axis=0)
-    cnn_model.predict(img, verbose=0)
 
-    age_val = float(answers.get("age", 1))
-    d1_val  = float(answers.get("diameter_1", 0.0))
-    d2_val  = float(answers.get("diameter_2", 0.0))
-    scaled  = sc.transform([[age_val, d1_val, d2_val]])
-    age_s   = scaled[0][0]
+def build_ann_vector(answers):
+    """Patient metadata -> the 32-column ANN input (same order/encoding as notebooks 02/05)."""
+    scaled = sc.transform([[float(answers.get("age", 1)),
+                            float(answers.get("diameter_1", 0.0)),
+                            float(answers.get("diameter_2", 0.0))]])[0]          # age, d1, d2 (z-scored)
+    region = str(answers.get("region", "")).upper()
+    row = {
+        "age": scaled[0],
+        "gender": 1 if answers.get("gender") == "Male" else 0,                  # MALE:1 FEMALE:0
+        "diameter_1": scaled[1],
+        "diameter_2": scaled[2],
+        "race": RACE_CODE.get(answers.get("race"), 3),
+    }
+    for k in ("smoke", "drink", "skin_cancer_history", "cancer_history", "pesticide", "biopsed",
+              "grew", "hurt", "bleed", "itch", "elevation", "changed",
+              "has_sewage_system", "has_piped_water"):
+        row[k] = to_bool(answers.get(k))                                        # TRUE:1 FALSE:0
+    for r in REGION_COLS:
+        row[f"region_{r}"] = 1 if region == r else 0
+    return np.array([[row[c] for c in ANN_FEATURES]], dtype=np.float32)
 
-    meta = np.array([[
-        age_s,
-        1 if answers.get("gender") == "Male" else 0,
-        to_bool(answers.get("smoke")),
-        to_bool(answers.get("drink")),
-        to_bool(answers.get("skin_cancer_history")),
-        to_bool(answers.get("cancer_history")),
-        to_bool(answers.get("pesticide")),
-        to_bool(answers.get("biopsed")),
-        to_bool(answers.get("grew")),
-        to_bool(answers.get("hurt")),
-        to_bool(answers.get("bleed")),
-        to_bool(answers.get("itch")),
-    ]])
 
-    ensemble_out = ensemble_clf.predict(meta)
-    disease      = orderLabels[ensemble_out][0]
+def _np(out):
+    return out.numpy() if hasattr(out, "numpy") else np.asarray(out)
 
-    predc = np.array([xgb_clf.predict(meta), lgb_clf.predict(meta)])
-    unique_cls, counts = np.unique(predc, return_counts=True)
-    freq       = dict(zip(unique_cls, counts))
-    pred_class = max(freq, key=freq.get)
-    confidence = round(freq[pred_class] / predc.size * 100)
 
-    return disease, confidence
+def load_cnn_input(answers):
+    path = array_path(answers["image_token"])
+    if path and os.path.exists(path):
+        arr = np.load(path)
+    else:                                   # fallback: rebuild from the stored JPEG
+        with Image.open(image_path(answers["image_token"])) as im:
+            arr = np.asarray(im.convert("RGB").resize((224, 224), Image.BILINEAR), dtype=np.uint8)
+    return (arr.astype("float32") / 255.0)[None, ...]
 
-# ── PDF Report ─────────────────────────────────────────────────────────────────
+
+def run_inference(answers):
+    cnn, ann = get_models()
+    with _predict_lock:
+        cnn_p = _np(cnn(load_cnn_input(answers), training=False))                    # (1, 6)
+        ann_p = _np(ann(build_ann_vector(answers), training=False)) * 2              # (1, 6)  ← same *2 as notebook 06
+
+    final_x = np.concatenate([cnn_p, ann_p], axis=1)                                 # (1, 12)
+
+    ensemble_out = ensemble_clf.predict(final_x)
+    proba        = ensemble_clf.predict_proba(final_x)[0]
+    code         = str(orderLabels[ensemble_out][0])
+    confidence   = proba[list(ensemble_clf.classes_).index(ensemble_out[0])] * 100
+
+    name    = DISEASE_NAMES.get(code)
+    disease = f"{name} ({code})" if name else code
+    return disease, int(round(float(confidence)))
+
+
+# ── PDF Report (server-side; the result page uses it as a fallback) ───────────
 def build_pdf(answers, disease, confidence):
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (Image as RLImage, Paragraph, SimpleDocTemplate,
+                                    Spacer, Table, TableStyle)
+
     buf    = io.BytesIO()
-    doc    = SimpleDocTemplate(buf, pagesize=A4,
-                               leftMargin=2*cm, rightMargin=2*cm,
-                               topMargin=2*cm,  bottomMargin=2*cm)
+    doc    = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm,
+                               topMargin=2*cm, bottomMargin=2*cm)
     styles = getSampleStyleSheet()
     story  = []
 
-    title_style = ParagraphStyle("title", parent=styles["Title"],
-                                  fontSize=20, spaceAfter=6, alignment=TA_CENTER)
-    sub_style   = ParagraphStyle("sub",   parent=styles["Normal"],
-                                  fontSize=10, textColor=colors.grey,
-                                  alignment=TA_CENTER, spaceAfter=18)
-    h2_style    = ParagraphStyle("h2",    parent=styles["Heading2"],
-                                  fontSize=13, spaceBefore=14, spaceAfter=6,
-                                  textColor=colors.HexColor("#4f46e5"))
+    title_style = ParagraphStyle("title", parent=styles["Title"], fontSize=20,
+                                 spaceAfter=6, alignment=TA_CENTER)
+    sub_style   = ParagraphStyle("sub", parent=styles["Normal"], fontSize=10,
+                                 textColor=colors.grey, alignment=TA_CENTER, spaceAfter=18)
+    h2_style    = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=13, spaceBefore=14,
+                                 spaceAfter=6, textColor=colors.HexColor("#4f46e5"))
 
-    story.append(Paragraph("🩺 Skin Disease Prediction Report", title_style))
+    story.append(Paragraph("Skin Disease Prediction Report", title_style))
     story.append(Paragraph("AI-Assisted Dermatology · For clinical review only", sub_style))
 
-    # ── Lesion image ──
-    img_token = answers.get("image_token")
-    img_mime  = answers.get("image_mime", "image/jpeg")
-    if img_token:
-        img_bytes = get_image_bytes(img_token, img_mime)
-        if img_bytes:
-            rl_img = RLImage(io.BytesIO(img_bytes), width=8*cm, height=8*cm)
-            rl_img.hAlign = "CENTER"
-            story.append(rl_img)
-            story.append(Spacer(1, 10))
+    # lesion image (keep aspect ratio)
+    path = image_path(answers.get("image_token"))
+    if path and os.path.exists(path):
+        with Image.open(path) as im:
+            w, h = im.size
+        scale = min(8*cm / w, 8*cm / h)
+        rl_img = RLImage(path, width=w*scale, height=h*scale)
+        rl_img.hAlign = "CENTER"
+        story += [rl_img, Spacer(1, 10)]
 
-    # ── Diagnosis block ──
     story.append(Paragraph("Diagnosis", h2_style))
-    diag_data = [
-        ["Predicted Disease", disease],
-        ["Confidence",        f"{confidence}%"],
-    ]
-    t = Table(diag_data, colWidths=[6*cm, 10*cm])
+    t = Table([["Predicted Disease", disease], ["Confidence", f"{confidence}%"]],
+              colWidths=[6*cm, 10*cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND",  (0, 0), (-1, 0), colors.HexColor("#ede9fe")),
-        ("BACKGROUND",  (0, 1), (-1, 1), colors.HexColor("#f5f3ff")),
-        ("TEXTCOLOR",   (0, 0), (0, -1), colors.HexColor("#4f46e5")),
-        ("FONTNAME",    (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE",    (0, 0), (-1, -1), 11),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#4f46e5")),
+        ("FONTNAME",  (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE",  (0, 0), (-1, -1), 11),
         ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.HexColor("#ede9fe"), colors.HexColor("#f5f3ff")]),
-        ("GRID",        (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d2fe")),
-        ("PADDING",     (0, 0), (-1, -1), 8),
+        ("GRID",      (0, 0), (-1, -1), 0.5, colors.HexColor("#c7d2fe")),
+        ("PADDING",   (0, 0), (-1, -1), 8),
     ]))
-    story.append(t)
-    story.append(Spacer(1, 12))
-
-    # ── Patient info ──
-    story.append(Paragraph("Patient Information", h2_style))
+    story += [t, Spacer(1, 12), Paragraph("Patient Information", h2_style)]
 
     def yn(v):
         return "Yes" if str(v) == "True" else ("No" if str(v) == "False" else str(v))
 
     rows = [
         ["Field", "Value"],
-        ["Name",                  answers.get("name", "N/A")],
-        ["Age",                   str(int(float(answers.get("age", 0)))) + " yrs"],
-        ["Gender",                answers.get("gender", "N/A")],
-        ["Race",                  answers.get("race", "N/A")],
-        ["Lesion Region",         answers.get("region", "N/A")],
-        ["Largest Diameter",      f"{answers.get('diameter_1', 'N/A')} mm"],
-        ["Smallest Diameter",     f"{answers.get('diameter_2', 'N/A')} mm"],
-        ["Smokes",                yn(answers.get("smoke"))],
-        ["Drinks Alcohol",        yn(answers.get("drink"))],
-        ["Skin Cancer History",   yn(answers.get("skin_cancer_history"))],
-        ["Cancer History",        yn(answers.get("cancer_history"))],
-        ["Pesticide Exposure",    yn(answers.get("pesticide"))],
-        ["Biopsied",              yn(answers.get("biopsed"))],
-        ["Lesion Grew",           yn(answers.get("grew"))],
-        ["Lesion Hurts",          yn(answers.get("hurt"))],
-        ["Lesion Bleeds",         yn(answers.get("bleed"))],
-        ["Lesion Itches",         yn(answers.get("itch"))],
-        ["Elevated",              yn(answers.get("elevation"))],
-        ["Changed",               yn(answers.get("changed"))],
-        ["Has Sewage System",     yn(answers.get("has_sewage_system"))],
-        ["Has Piped Water",       yn(answers.get("has_piped_water"))],
+        ["Name",                answers.get("name", "N/A")],
+        ["Age",                 str(int(float(answers.get("age", 0)))) + " yrs"],
+        ["Gender",              answers.get("gender", "N/A")],
+        ["Race",                answers.get("race", "N/A")],
+        ["Lesion Region",       answers.get("region", "N/A")],
+        ["Largest Diameter",    f"{answers.get('diameter_1', 'N/A')} mm"],
+        ["Smallest Diameter",   f"{answers.get('diameter_2', 'N/A')} mm"],
+        ["Smokes",              yn(answers.get("smoke"))],
+        ["Drinks Alcohol",      yn(answers.get("drink"))],
+        ["Skin Cancer History", yn(answers.get("skin_cancer_history"))],
+        ["Cancer History",      yn(answers.get("cancer_history"))],
+        ["Pesticide Exposure",  yn(answers.get("pesticide"))],
+        ["Biopsied",            yn(answers.get("biopsed"))],
+        ["Lesion Grew",         yn(answers.get("grew"))],
+        ["Lesion Hurts",        yn(answers.get("hurt"))],
+        ["Lesion Bleeds",       yn(answers.get("bleed"))],
+        ["Lesion Itches",       yn(answers.get("itch"))],
+        ["Elevated",            yn(answers.get("elevation"))],
+        ["Changed",             yn(answers.get("changed"))],
+        ["Has Sewage System",   yn(answers.get("has_sewage_system"))],
+        ["Has Piped Water",     yn(answers.get("has_piped_water"))],
     ]
-
-    pt = Table(rows, colWidths=[7*cm, 9*cm])
-    row_colors = [colors.HexColor("#f5f5ff") if i % 2 == 0 else colors.white
-                  for i in range(len(rows))]
+    from xml.sax.saxutils import escape      # Paragraph parses <tags>, so escape user text
+    pt = Table([[Paragraph(escape(str(c)), styles["Normal"]) if j == 1 else c for j, c in enumerate(r)]
+                for r in rows], colWidths=[7*cm, 9*cm])
     pt.setStyle(TableStyle([
-        ("BACKGROUND",  (0, 0), (-1, 0), colors.HexColor("#4f46e5")),
-        ("TEXTCOLOR",   (0, 0), (-1, 0), colors.white),
-        ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",    (0, 0), (-1, -1), 10),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.HexColor("#f5f5ff"), colors.white]),
-        ("GRID",        (0, 0), (-1, -1), 0.4, colors.HexColor("#e0e0f0")),
-        ("PADDING",     (0, 0), (-1, -1), 7),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4f46e5")),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, -1), 10),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#f5f5ff"), colors.white]),
+        ("GRID",       (0, 0), (-1, -1), 0.4, colors.HexColor("#e0e0f0")),
+        ("PADDING",    (0, 0), (-1, -1), 7),
     ]))
-    story.append(pt)
-    story.append(Spacer(1, 16))
-
-    disclaimer = ("⚠️  This report is generated by an AI model and is intended for "
-                  "informational purposes only. It must be reviewed by a qualified "
-                  "dermatologist before any clinical decision is made.")
-    story.append(Paragraph(disclaimer,
-                            ParagraphStyle("disc", parent=styles["Normal"],
-                                           fontSize=8, textColor=colors.grey,
-                                           borderPad=6)))
+    story += [pt, Spacer(1, 16), Paragraph(
+        "This report is generated by an AI model and is intended for informational purposes "
+        "only. It must be reviewed by a qualified dermatologist before any clinical decision "
+        "is made.",
+        ParagraphStyle("disc", parent=styles["Normal"], fontSize=8, textColor=colors.grey))]
 
     doc.build(story)
     buf.seek(0)
     return buf
 
-# ── Flask app ──────────────────────────────────────────────────────────────────
-app = Flask(__name__, template_folder=os.path.join(BASE, "templates"))
-app.secret_key = "dermai-secret-2024"
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
-# ── Upload page (new first step) ───────────────────────────────────────────────
-@app.route("/", methods=["GET"])
+# ── Flask app ──────────────────────────────────────────────────────────────────
+def _secret_key():
+    key = os.environ.get("SECRET_KEY")
+    if key:
+        return key
+    path = os.path.join(tempfile.gettempdir(), "dermai_secret_key")
+    try:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(secrets.token_hex(32))
+        except FileExistsError:
+            pass
+        with open(path) as f:
+            stored = f.read().strip()
+        if stored:
+            return stored
+    except OSError:
+        pass
+    return secrets.token_hex(32)
+
+
+app = Flask(__name__, template_folder=os.path.join(BASE, "templates"))
+app.secret_key = _secret_key()
+app.config.update(
+    MAX_CONTENT_LENGTH=2 * MAX_FILE_BYTES + 1024 * 1024,   # two images + form
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
+
+def render_upload(answers, error=None, status=200):
+    return render_template("index.html",
+                           page="upload",
+                           answers=answers,
+                           error=error,
+                           image_preview=image_url("lesion", answers),
+                           photo_preview=image_url("photo", answers)), status
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    return render_upload(session.get("answers", {}),
+                         "Upload is too large (max 16 MB per image).", 413)
+
+
+# ── Pages ──────────────────────────────────────────────────────────────────────
+@app.route("/")
 def index():
+    delete_session_images(session.get("answers", {}))
     session.clear()
     session["answers"] = {}
     return redirect(url_for("upload"))
 
+
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
-    error = None
+    cleanup_old_files()
     answers = session.get("answers", {})
+    error = None
 
     if request.method == "POST":
-        # Patient name
         name = request.form.get("name", "").strip()
         if not name:
             error = "Please enter the patient's name."
-        else:
+        elif len(name) > 100:
+            error = "Patient name is too long (max 100 characters)."
+
+        new_image = new_photo = None
+        if not error:
+            try:
+                f = request.files.get("image")
+                if f and f.filename:
+                    new_image = save_image(f, for_cnn=True)
+                elif not image_exists(answers.get("image_token")):
+                    error = "Please upload a skin lesion image."
+
+                p = request.files.get("patient_photo")
+                if not error and p and p.filename:
+                    new_photo = save_image(p)
+            except ValueError as e:
+                error = str(e)
+                delete_image(new_image)
+
+        if not error:
             answers["name"] = name
-
-        # Lesion image
-        if not error:
-            if "image" in request.files and request.files["image"].filename:
-                token, mime = save_image_to_disk(request.files["image"])
-                # Delete old temp file if any
-                old_token = answers.get("image_token")
-                old_mime  = answers.get("image_mime", "image/jpeg")
-                if old_token:
-                    old_ext  = old_mime.split("/")[-1] if "/" in old_mime else "jpg"
-                    old_path = os.path.join(UPLOAD_DIR, f"{old_token}.{old_ext}")
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
-                answers["image_token"] = token
-                answers["image_mime"]  = mime
-            elif "image_token" not in answers:
-                error = "Please upload a skin lesion image."
-
-        # Optional patient photo
-        if not error:
-            if "patient_photo" in request.files and request.files["patient_photo"].filename:
-                p_token, p_mime = save_image_to_disk(request.files["patient_photo"])
-                answers["photo_token"] = p_token
-                answers["photo_mime"]  = p_mime
-
-        if not error:
+            if new_image:
+                delete_image(answers.get("image_token"))
+                answers["image_token"] = new_image
+            if new_photo:
+                delete_image(answers.get("photo_token"))
+                answers["photo_token"] = new_photo
             session["answers"] = answers
-            session["step"]    = 0
+            session["step"] = 0
+            session.pop("result", None)
             return redirect(url_for("question"))
 
-    # Build preview data URIs for template (small — only for display, not stored in session)
-    image_preview = None
-    photo_preview = None
-    if "image_token" in answers:
-        image_preview = get_image_data_uri(answers["image_token"], answers.get("image_mime","image/jpeg"))
-    if "photo_token" in answers:
-        photo_preview = get_image_data_uri(answers["photo_token"], answers.get("photo_mime","image/jpeg"))
+    return render_upload(answers, error)
 
-    return render_template("index.html",
-                           page          = "upload",
-                           answers       = answers,
-                           error         = error,
-                           image_preview = image_preview,
-                           photo_preview = photo_preview)
 
-# ── Questionnaire ──────────────────────────────────────────────────────────────
 @app.route("/question", methods=["GET", "POST"])
 def question():
-    if "answers" not in session:
-        return redirect(url_for("index"))
+    answers = session.get("answers") or {}
+    if not answers.get("name") or not image_exists(answers.get("image_token")):
+        return redirect(url_for("upload"))
 
-    step    = session.get("step", 0)
-    answers = session.get("answers", {})
-    error   = None
+    try:
+        step = int(session.get("step", 0))
+    except (TypeError, ValueError):
+        step = 0
+    step = max(0, min(step, TOTAL - 1))
+    error = None
 
     if request.method == "POST":
         action = request.form.get("action", "next")
-        q      = QUESTIONS[step]
-        key    = q["key"]
+        q, key = QUESTIONS[step], QUESTIONS[step]["key"]
 
         if action == "prev":
-            # If on first question, go back to upload page
             if step == 0:
                 return redirect(url_for("upload"))
             session["step"] = step - 1
             return redirect(url_for("question"))
 
-        # Validate & save
         if q["type"] == "radio":
             val = request.form.get(key)
             if not val:
                 error = "Please select an option before continuing."
-            else:
-                answers[key] = val
-
-        elif q["type"] == "text":
-            val = request.form.get(key, "").strip()
-            if not val:
-                error = "Please enter a value before continuing."
+            elif val not in q["options"]:
+                error = "Invalid option selected."
             else:
                 answers[key] = val
 
         elif q["type"] in ("number", "slider"):
-            val = request.form.get(key)
-            if val is None or val == "":
+            raw = request.form.get(key, "").strip()
+            if raw == "":
                 error = "Please enter a value before continuing."
             else:
                 try:
-                    answers[key] = float(val)
+                    num = float(raw)
                 except ValueError:
+                    num = None
+                if num is None or not math.isfinite(num):
                     error = "Please enter a valid number."
+                elif not (q["min"] <= num <= q["max"]):
+                    error = f"Value must be between {q['min']} and {q['max']}."
+                elif key == "diameter_2" and num > float(answers.get("diameter_1", num)):
+                    error = "The smallest diameter can't be larger than the largest diameter."
+                else:
+                    answers[key] = num
 
         if not error:
             session["answers"] = answers
-            if action == "next":
-                if step < TOTAL - 1:
-                    session["step"] = step + 1
-                    return redirect(url_for("question"))
-                else:
-                    return redirect(url_for("result"))
-
-    step = session.get("step", 0)
-    q    = QUESTIONS[step]
-    pct  = round((step + 1) / TOTAL * 100)
-
-    # Build small lesion preview for the sidebar
-    answers = session.get("answers", {})
-    image_preview = None
-    if "image_token" in answers:
-        image_preview = get_image_data_uri(answers["image_token"],
-                                           answers.get("image_mime","image/jpeg"))
+            session.pop("result", None)          # answers changed -> recompute
+            if step < TOTAL - 1:
+                session["step"] = step + 1
+                return redirect(url_for("question"))
+            return redirect(url_for("result"))
 
     return render_template("index.html",
-                           page          = "question",
-                           q             = q,
-                           step          = step,
-                           total         = TOTAL,
-                           pct           = pct,
-                           answers       = answers,
-                           error         = error,
-                           image_preview = image_preview)
+                           page="question",
+                           q=QUESTIONS[step],
+                           step=step,
+                           total=TOTAL,
+                           pct=round((step + 1) / TOTAL * 100),
+                           answers=answers,
+                           error=error,
+                           image_preview=image_url("lesion", answers))
 
-# ── Result ─────────────────────────────────────────────────────────────────────
+
 @app.route("/result")
 def result():
-    answers = session.get("answers", {})
-    if "image_token" not in answers:
+    answers = session.get("answers") or {}
+    if not image_exists(answers.get("image_token")):
         return redirect(url_for("index"))
 
-    image_bytes = get_image_bytes(answers["image_token"], answers.get("image_mime","image/jpeg"))
-    if image_bytes is None:
-        return redirect(url_for("index"))
+    # all questions must be answered
+    for i, q in enumerate(QUESTIONS):
+        if q["key"] not in answers:
+            session["step"] = i
+            return redirect(url_for("question"))
 
-    disease, confidence = run_inference(answers, image_bytes)
-    # Cache result in session for the PDF download route
-    session["result_disease"]    = disease
-    session["result_confidence"] = confidence
+    cached = session.get("result")
+    if cached:
+        disease, confidence = cached["disease"], cached["confidence"]
+    else:
+        try:
+            disease, confidence = run_inference(answers)
+        except Exception:
+            app.logger.exception("Inference failed")
+            return render_upload(answers, "Prediction failed. Please try again.", 500)
+        # Cache result in session for the PDF download route (and for page refreshes)
+        session["result"] = {"disease": disease, "confidence": confidence}
 
-    r    = 54
-    circ = 2 * 3.14159 * r
-    dash = circ * confidence / 100
-    gap  = circ - dash
-
-    image_src = get_image_data_uri(answers["image_token"], answers.get("image_mime","image/jpeg"))
-    photo_src = None
-    if "photo_token" in answers:
-        photo_src = get_image_data_uri(answers["photo_token"], answers.get("photo_mime","image/jpeg"))
+    flag_keys = ("smoke", "drink", "skin_cancer_history", "cancer_history", "pesticide",
+                 "biopsed", "grew", "hurt", "bleed", "itch", "elevation", "changed",
+                 "has_sewage_system", "has_piped_water")
+    try:
+        age_txt = f"{int(float(answers.get('age', 0)))} yrs"
+    except (TypeError, ValueError):
+        age_txt = "N/A"
+    report = {                                  # consumed by the jsPDF code in the page
+        "disease": disease,
+        "name":    answers.get("name") or "patient",
+        "age":     age_txt,
+        "gender":  answers.get("gender", "N/A"),
+        "race":    answers.get("race", "N/A"),
+        "region":  answers.get("region", "N/A"),
+        "d1":      f"{answers.get('diameter_1', 'N/A')} mm",
+        "d2":      f"{answers.get('diameter_2', 'N/A')} mm",
+        "flags":   {k: answers.get(k, "N/A") for k in flag_keys},
+    }
 
     return render_template("index.html",
-                           page       = "result",
-                           answers    = answers,
-                           disease    = disease,
-                           confidence = confidence,
-                           dash       = round(dash, 1),
-                           gap        = round(gap,  1),
-                           r          = r,
-                           image_src  = image_src,
-                           photo_src  = photo_src)
+                           page="result",
+                           answers=answers,
+                           report=report,
+                           disease=disease,
+                           confidence=confidence,
+                           image_src=image_url("lesion", answers),
+                           photo_src=image_url("photo", answers))
+
+
+@app.route("/image/<kind>")
+def serve_image(kind):
+    key = {"lesion": "image_token", "photo": "photo_token"}.get(kind)
+    if not key:
+        abort(404)
+    token = (session.get("answers") or {}).get(key)
+    if not image_exists(token):
+        abort(404)
+    resp = send_file(image_path(token), mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=3600"   # URL carries ?v=token
+    return resp
+
 
 # ── PDF download ───────────────────────────────────────────────────────────────
 @app.route("/download-report")
 def download_report():
-    answers    = session.get("answers", {})
-    disease    = session.get("result_disease")
-    confidence = session.get("result_confidence")
-
-    if not answers or not disease:
+    answers = session.get("answers", {})
+    cached  = session.get("result")          # cached by /result
+    if not answers or not cached or not image_exists(answers.get("image_token")):
         return redirect(url_for("index"))
 
-    pdf_buf  = build_pdf(answers, disease, confidence)
-    pdf_data = pdf_buf.read()
-    patient  = answers.get("name", "patient").replace(" ", "_")
-    filename = f"DermAI_Report_{patient}.pdf"
+    pdf_data = build_pdf(answers, cached["disease"], cached["confidence"]).read()
+    patient  = re.sub(r"[^\w\-]+", "_", answers.get("name", "patient")).strip("_") or "patient"
 
     response = make_response(pdf_data)
     response.headers["Content-Type"]        = "application/pdf"
-    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response.headers["Content-Disposition"] = f'attachment; filename="DermAI_Report_{patient}.pdf"'
     response.headers["Content-Length"]      = len(pdf_data)
     response.headers["Cache-Control"]       = "no-cache, no-store, must-revalidate"
     return response
 
-# ── Reset ──────────────────────────────────────────────────────────────────────
+
 @app.route("/reset")
 def reset():
-    # Clean up temp images
-    answers = session.get("answers", {})
-    for key in ("image_token", "photo_token"):
-        token = answers.get(key)
-        mime  = answers.get(key.replace("token","mime"), "image/jpeg")
-        if token:
-            ext  = mime.split("/")[-1] if "/" in mime else "jpg"
-            path = os.path.join(UPLOAD_DIR, f"{token}.{ext}")
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+    delete_session_images(session.get("answers", {}))
     session.clear()
     return redirect(url_for("index"))
 
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
