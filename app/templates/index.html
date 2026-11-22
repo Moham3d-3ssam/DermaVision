@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -572,7 +571,7 @@ input[type="range"]::-moz-range-thumb {
             <div class="drop-text"><span>Click to browse</span> or drag & drop</div>
             <div class="drop-hint">PNG · JPG · JPEG — max 16 MB</div>
           </div>
-          <div class="img-preview {% if not image_preview %}hidden{% endif %}" id="preview-wrap">
+          <div class="img-preview{{ '' if image_preview else ' hidden' }}" id="preview-wrap">
             {% if image_preview %}
             <img src="{{ image_preview }}" id="preview-img" alt="preview"/>
             {% else %}
@@ -597,7 +596,7 @@ input[type="range"]::-moz-range-thumb {
             <div class="drop-text"><span>Click to browse</span></div>
             <div class="drop-hint">Optional · PNG · JPG</div>
           </div>
-          <div class="photo-circle-preview {% if not photo_preview %}hidden{% endif %}" id="photo-circle-wrap">
+          <div class="photo-circle-preview{{ '' if photo_preview else ' hidden' }}" id="photo-circle-wrap">
             {% if photo_preview %}
             <img class="photo-circle" src="{{ photo_preview }}" id="photo-preview-img" alt="patient photo"/>
             {% else %}
@@ -645,7 +644,7 @@ input[type="range"]::-moz-range-thumb {
         <span class="progress-count">{{ step + 1 }} / {{ total }}</span>
       </div>
       <div class="progress-track">
-        <div class="progress-fill" style="width:{{ pct }}%"></div>
+        <div class="progress-fill" data-pct="{{ pct }}"></div>
       </div>
     </div>
 
@@ -661,10 +660,9 @@ input[type="range"]::-moz-range-thumb {
 
       <!-- RADIO -->
       {% if q.type == 'radio' %}
-      <div class="radio-group">
+      <div class="radio-group" data-current="{{ answers.get(q.key, '') }}">
         {% for opt in q.options %}
-        <input class="radio-option" type="radio" name="{{ q.key }}" id="{{ q.key }}_{{ loop.index }}" value="{{ opt }}"
-               {% if answers.get(q.key) == opt %}checked{% endif %} required/>
+        <input class="radio-option" type="radio" name="{{ q.key }}" id="{{ q.key }}_{{ loop.index }}" value="{{ opt }}" required/>
         <label class="radio-label" for="{{ q.key }}_{{ loop.index }}">
           <span class="radio-dot"></span>{{ opt }}
         </label>
@@ -812,9 +810,14 @@ input[type="range"]::-moz-range-thumb {
     </a>
   </div>
 
+  <!-- data for the PDF (read by the script below) -->
+  <div id="report-data" hidden data-report='{{ report|tojson }}'></div>
+
   <!-- jsPDF -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script>
+  const REPORT = JSON.parse(document.getElementById('report-data').dataset.report);
+
   /* Convert an <img> element to a base64 JPEG data-URI via canvas */
   function imgElToDataURI(imgEl) {
     if (!imgEl || !imgEl.complete) return null;
@@ -842,6 +845,7 @@ input[type="range"]::-moz-range-thumb {
 
   function downloadReport() {
     const btn = document.getElementById('dl-btn');
+    if (!window.jspdf) { window.location.href = '/download-report'; return; }   /* CDN blocked -> server PDF */
     btn.textContent = 'Generating...';
     btn.disabled = true;
 
@@ -933,13 +937,13 @@ input[type="range"]::-moz-range-thumb {
       /* disease name — white, large */
       setTxt(C.white);
       doc.setFont('helvetica','bold'); doc.setFontSize(15);
-      const diseaseLines = doc.splitTextToSize('{{ disease }}', stripW - 8);
+      const diseaseLines = doc.splitTextToSize(REPORT.disease, stripW - 8);
       doc.text(diseaseLines, M + 5, y + 20);
 
       /* patient name only inside strip */
       setTxt([140, 140, 200]);
       doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
-      doc.text('{{ answers.get("name","—") }}', M + 5, y + 36);
+      doc.text(REPORT.name, M + 5, y + 36);
 
       /* lesion image — fills right area edge-to-edge */
       if (lesionURI) {
@@ -964,13 +968,13 @@ input[type="range"]::-moz-range-thumb {
       y = sectionHead('Patient Information', y);
 
       const pFields = [
-        ['Name',           '{{ answers.get("name","N/A") }}'],
-        ['Age',            '{{ answers.get("age","N/A")|int }} yrs'],
-        ['Gender',         '{{ answers.get("gender","N/A") }}'],
-        ['Race',           '{{ answers.get("race","N/A") }}'],
-        ['Lesion Region',  '{{ answers.get("region","N/A") }}'],
-        ['Largest Diam.',  '{{ answers.get("diameter_1","N/A") }} mm'],
-        ['Smallest Diam.', '{{ answers.get("diameter_2","N/A") }} mm'],
+        ['Name',           REPORT.name],
+        ['Age',            REPORT.age],
+        ['Gender',         REPORT.gender],
+        ['Race',           REPORT.race],
+        ['Lesion Region',  REPORT.region],
+        ['Largest Diam.',  REPORT.d1],
+        ['Smallest Diam.', REPORT.d2],
       ];
 
       const colW2  = inner / 2;
@@ -998,20 +1002,20 @@ input[type="range"]::-moz-range-thumb {
 
       function yn(v){ return v==='True'?'Yes': v==='False'?'No': String(v||'N/A'); }
       const clinical = [
-        ['Smokes',         yn('{{ answers.get("smoke","N/A") }}')],
-        ['Drinks Alcohol', yn('{{ answers.get("drink","N/A") }}')],
-        ['Skin Cancer Hx', yn('{{ answers.get("skin_cancer_history","N/A") }}')],
-        ['Cancer History', yn('{{ answers.get("cancer_history","N/A") }}')],
-        ['Pesticide Exp.', yn('{{ answers.get("pesticide","N/A") }}')],
-        ['Biopsied',       yn('{{ answers.get("biopsed","N/A") }}')],
-        ['Lesion Grew',    yn('{{ answers.get("grew","N/A") }}')],
-        ['Lesion Hurts',   yn('{{ answers.get("hurt","N/A") }}')],
-        ['Lesion Bleeds',  yn('{{ answers.get("bleed","N/A") }}')],
-        ['Lesion Itches',  yn('{{ answers.get("itch","N/A") }}')],
-        ['Elevated',       yn('{{ answers.get("elevation","N/A") }}')],
-        ['Changed',        yn('{{ answers.get("changed","N/A") }}')],
-        ['Sewage System',  yn('{{ answers.get("has_sewage_system","N/A") }}')],
-        ['Piped Water',    yn('{{ answers.get("has_piped_water","N/A") }}')],
+        ['Smokes',         yn(REPORT.flags.smoke)],
+        ['Drinks Alcohol', yn(REPORT.flags.drink)],
+        ['Skin Cancer Hx', yn(REPORT.flags.skin_cancer_history)],
+        ['Cancer History', yn(REPORT.flags.cancer_history)],
+        ['Pesticide Exp.', yn(REPORT.flags.pesticide)],
+        ['Biopsied',       yn(REPORT.flags.biopsed)],
+        ['Lesion Grew',    yn(REPORT.flags.grew)],
+        ['Lesion Hurts',   yn(REPORT.flags.hurt)],
+        ['Lesion Bleeds',  yn(REPORT.flags.bleed)],
+        ['Lesion Itches',  yn(REPORT.flags.itch)],
+        ['Elevated',       yn(REPORT.flags.elevation)],
+        ['Changed',        yn(REPORT.flags.changed)],
+        ['Sewage System',  yn(REPORT.flags.has_sewage_system)],
+        ['Piped Water',    yn(REPORT.flags.has_piped_water)],
       ];
 
       const cols3  = 4;
@@ -1044,12 +1048,12 @@ input[type="range"]::-moz-range-thumb {
       /* ══════════════════════════════════════
          SAVE
       ══════════════════════════════════════ */
-      const patientName = '{{ answers.get("name","patient") }}'.replace(/\s+/g,'_');
+      const patientName = REPORT.name.replace(/\s+/g,'_');
       doc.save('Report_' + patientName + '.pdf');
 
     } catch(err) {
-      alert('PDF error: ' + err.message);
       console.error(err);
+      window.location.href = '/download-report';   /* fallback: server-side PDF */
     } finally {
       btn.innerHTML = '&#8595;&nbsp; Download PDF Report';
       btn.disabled  = false;
@@ -1089,6 +1093,41 @@ function dzDrop(e, inputId, imgId, wrapId) {
     previewImg(fi, imgId, wrapId);
   }
 }
+
+/* Reject files > 16 MB before uploading */
+(function () {
+  const MAX = 16 * 1024 * 1024;
+  document.querySelectorAll('input[type=file]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const f = inp.files && inp.files[0];
+      if (f && f.size > MAX) {
+        alert('This image is larger than 16 MB. Please choose a smaller one.');
+        inp.value = '';
+        const wrap = inp.closest('div').parentElement.querySelector('.img-preview, .photo-circle-preview');
+        if (wrap) wrap.classList.add('hidden');
+      }
+    }, true);
+  });
+})();
+
+/* Prevent double submits; show progress (the last step runs the models) */
+document.querySelectorAll('form').forEach(form => {
+  form.addEventListener('submit', e => {
+    const btn = e.submitter;
+    if (!btn || btn.value === 'prev') return;
+    const last = /Predict/.test(btn.textContent);
+    setTimeout(() => {
+      form.querySelectorAll('button').forEach(b => b.disabled = true);
+      if (last) btn.textContent = 'Please wait…';
+    }, 0);
+  });
+});
+
+/* Restore saved radio answer + progress bar width (kept out of the markup so it lints clean) */
+document.querySelectorAll('.radio-group[data-current]').forEach(g => {
+  g.querySelectorAll('input[type=radio]').forEach(r => { r.checked = (r.value === g.dataset.current); });
+});
+document.querySelectorAll('.progress-fill[data-pct]').forEach(el => { el.style.width = el.dataset.pct + '%'; });
 </script>
 </body>
 </html>
